@@ -1,138 +1,115 @@
-import { Plugin } from "@current/plugin-interface";
-import { load } from "cheerio";
+import { fetchText } from '@libs/fetch';
+import { Plugin } from '@/types/plugin';
+import { load as loadCheerio } from 'cheerio';
+import { defaultCover } from '@libs/defaultCover';
+import { NovelStatus } from '@libs/novelStatus';
 
-const headers = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://novelnice.com/',
-};
-
-class NovelNicePlugin implements Plugin {
+class NovelNicePlugin implements Plugin.PluginBase {
     id = "novelnice";
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.1.2";
+    version = "1.1.3";
 
-    async popularNovels(pageNo: number) {
+    // Reusable headers
+    private headers = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+    };
+
+    async popularNovels(pageNo: number, options: Plugin.PopularNovelsOptions): Promise<Plugin.NovelItem[]> {
         const url = pageNo === 1 ? this.site : `${this.site}page/${pageNo}/`;
-        const result = await fetch(url, { headers });
-        const body = await result.text();
-        const $ = load(body);
+        const body = await fetchText(url, { headers: this.headers });
+        const $ = loadCheerio(body);
+        const novels: Plugin.NovelItem[] = [];
 
-        const novels: any[] = [];
-        
         $(".page-item-detail").each((i, el) => {
             const titleEl = $(el).find(".post-title a, .item-summary h3 a, h4 a").first();
             const name = titleEl.text().trim();
-            const url = titleEl.attr("href") || "";
-            
-            const cover = $(el).find("img").attr("data-src") || 
-                          $(el).find("img").attr("data-lazy-src") || 
-                          $(el).find("img").attr("src") || "";
+            const path = titleEl.attr("href")?.replace(this.site, "") || "";
+            const cover = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || defaultCover;
 
-            if (name && url) {
-                novels.push({ name, url, cover });
-            }
+            if (name && path) novels.push({ name, path, cover });
         });
-
         return novels;
     }
 
-    async parseNovel(novelUrl: string) {
-        const result = await fetch(novelUrl, { headers });
-        const body = await result.text();
-        const $ = load(body);
+    async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
+        // Normalization: Ensure we are using the /read/ path
+        const url = `${this.site}${novelPath.replace('/novel/', '/read/')}`;
+        const body = await fetchText(url, { headers: this.headers });
+        const $ = loadCheerio(body);
 
-        // Strip custom styling and layout configurations explicitly out of memory
+        // Sanitize layout
         $("style, script, #nn-comment-optimize-inline-css").remove();
 
-        const novel: any = {
-            url: novelUrl,
+        const novel: Plugin.SourceNovel = {
+            path: novelPath,
             name: $(".post-title h1, .post-title h3, h1").first().text().trim(),
-            cover: $(".summary_image img").attr("data-src") || $(".summary_image img").attr("src") || "",
+            cover: $(".summary_image img").attr("data-src") || $(".summary_image img").attr("src") || defaultCover,
             summary: $(".description-summary, .summary__content, .summary-text, .post-content_item").text().trim(),
             author: $(".author-content a").text().trim(),
-            artist: "",
-            status: $(".post-status").text().trim(),
+            status: $(".post-status").text().trim().toLowerCase().includes("ongoing") ? NovelStatus.Ongoing : NovelStatus.Completed,
+            genres: $(".genres-content a").map((i, el) => $(el).text().trim()).get(),
             chapters: []
         };
 
-        // Standard parsing extraction targeted on the unified layout container
+        // Extract Chapters
+        const chapters: Plugin.ChapterItem[] = [];
         $(".listing-chapters_wrap ul.main li a, .wp-manga-chapter a, .chapter-list a").each((i, el) => {
-            const chapterName = $(el).text().trim();
-            const chapterUrl = $(el).attr("href") || "";
-            if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
-                novel.chapters.push({ name: chapterName, url: chapterUrl });
-            }
+            chapters.push({
+                name: $(el).text().trim(),
+                path: $(el).attr("href")?.replace(this.site, "") || "",
+                chapterNumber: i + 1,
+            });
         });
 
-        // Safe background fallback if pagination blocks hide standard page listings
-        if (novel.chapters.length === 0) {
-            const ajaxUrl = novelUrl.endsWith('/') ? `${novelUrl}ajax/chapters/` : `${novelUrl}/ajax/chapters/`;
+        // AJAX Fallback
+        if (chapters.length === 0) {
+            const ajaxUrl = url.endsWith('/') ? `${url}ajax/chapters/` : `${url}/ajax/chapters/`;
             try {
-                const ajaxResult = await fetch(ajaxUrl, {
-                    method: 'POST',
-                    headers: { ...headers, 'X-Requested-With': 'XMLHttpRequest' }
+                const ajaxBody = await fetchText(ajaxUrl, { 
+                    headers: { ...this.headers, 'X-Requested-With': 'XMLHttpRequest' } 
                 });
-                const ajaxBody = await ajaxResult.text();
-                const $c = load(ajaxBody);
-
-                $c(".listing-chapters_wrap ul.main li a, .wp-manga-chapter a, .chapter-link a").each((i, el) => {
-                    const chapterName = $c(el).text().trim();
-                    const chapterUrl = $c(el).attr("href") || "";
-                    if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
-                        novel.chapters.push({ name: chapterName, url: chapterUrl });
-                    }
+                const $c = loadCheerio(ajaxBody);
+                $c(".listing-chapters_wrap ul.main li a, .chapter-link a").each((i, el) => {
+                    chapters.push({
+                        name: $c(el).text().trim(),
+                        path: $c(el).attr("href")?.replace(this.site, "") || "",
+                        chapterNumber: i + 1,
+                    });
                 });
-            } catch (e) {
-                // Fail-safe catch
-            }
+            } catch (e) { /* silent fail */ }
         }
 
-        if (novel.chapters.length > 0) {
-            const firstChapterName = novel.chapters[0].name.toLowerCase();
-            if (!firstChapterName.includes("chapter 1") && !firstChapterName.includes("ch.1")) {
-                novel.chapters.reverse();
-            }
-        }
-        
+        novel.chapters = chapters.reverse();
         return novel;
     }
 
-    async parseChapter(chapterUrl: string) {
-        const result = await fetch(chapterUrl, { headers });
-        const body = await result.text();
-        const $ = load(body);
+    async parseChapter(chapterPath: string): Promise<string> {
+        const url = `${this.site}${chapterPath}`;
+        const body = await fetchText(url, { headers: this.headers });
+        const $ = loadCheerio(body);
 
-        // Stripping dynamic toast elements and injected styling layers out of text layout blocks
         $("style, script, .nn-comment-toast, .nn-spinner").remove();
-
-        const chapterText = $(".text-left, .reading-content, .entry-content_wrap, .text-ui").html() || "";
-        return chapterText;
+        return $(".text-left, .reading-content, .entry-content_wrap, .text-ui").html() || "";
     }
 
-    async searchNovels(searchTerm: string, pageNo: number) {
+    async searchNovels(searchTerm: string, pageNo: number): Promise<Plugin.NovelItem[]> {
         const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}`;
-        const result = await fetch(url, { headers });
-        const body = await result.text();
-        const $ = load(body);
+        const body = await fetchText(url, { headers: this.headers });
+        const $ = loadCheerio(body);
+        const novels: Plugin.NovelItem[] = [];
 
-        const novels: any[] = [];
         $(".page-item-detail, .c-tabs-item__content, .search-wrap").each((i, el) => {
             const titleEl = $(el).find(".post-title a, h3 a, .title a").first();
             const name = titleEl.text().trim();
-            const url = titleEl.attr("href") || "";
-            const cover = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || "";
-            
-            if (name && url) {
-                novels.push({ name, url, cover });
-            }
+            const path = titleEl.attr("href")?.replace(this.site, "") || "";
+            const cover = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || defaultCover;
+            if (name && path) novels.push({ name, path, cover });
         });
-
         return novels;
     }
 }
 
 export default new NovelNicePlugin();
+    
