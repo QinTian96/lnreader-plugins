@@ -9,10 +9,12 @@ class NovelNicePlugin implements Plugin.PluginBase {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.1.5"; // Version bumped for reliability
+    version = "1.1.6"; // Incremented version
 
     private headers = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        'Referer': 'https://novelnice.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     };
 
     async popularNovels(pageNo: number, options: Plugin.PopularNovelsOptions): Promise<Plugin.NovelItem[]> {
@@ -37,16 +39,16 @@ class NovelNicePlugin implements Plugin.PluginBase {
         const body = await fetchText(url, { headers: this.headers });
         const $ = loadCheerio(body);
 
-        // Targeted summary extraction: strip UI clutter before parsing
-        const summaryContainer = $(".summary__content p").first();
-        summaryContainer.find(".summary-title, .btn").remove();
-        const summary = summaryContainer.text().trim() || $(".description-summary").text().trim();
+        // Targeted summary extraction: strip UI clutter
+        const summaryContainer = $(".summary__content, .description-summary").first();
+        summaryContainer.find("h3, .summary-title, .btn").remove();
+        const summary = summaryContainer.text().trim() || "No summary available.";
 
-        // Metadata extraction
+        // Metadata extraction with selector isolation
         const author = $(".author-content a").first().text().trim();
         const statusText = $(".post-status").text().trim().toLowerCase();
         const status = statusText.includes("ongoing") ? NovelStatus.Ongoing : NovelStatus.Completed;
-        const genres = $(".genres-content a").map((i, el) => $(el).text().trim()).get();
+        const genres = $(".genres-content a").map((_, el) => $(el).text().trim()).get().filter(g => g.length > 0);
 
         const novel: Plugin.SourceNovel = {
             path: novelPath,
@@ -59,27 +61,36 @@ class NovelNicePlugin implements Plugin.PluginBase {
             chapters: []
         };
 
-        // Optimized AJAX Chapter Loading
+        // AJAX Chapter Loading
         const novelId = $("#manga-chapters-holder").attr("data-id");
         if (novelId) {
             try {
                 const ajaxUrl = `${this.site}wp-admin/admin-ajax.php`;
                 const ajaxBody = await fetchText(ajaxUrl, {
                     method: 'POST',
-                    headers: { ...this.headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+                    headers: { ...this.headers, 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
                     body: `action=manga_get_chapters&manga=${novelId}`
                 });
                 const $c = loadCheerio(ajaxBody);
-                const chapters: Plugin.ChapterItem[] = [];
-                $c("li.wp-manga-chapter a").each((i, el) => {
-                    chapters.push({
+                $c("li.wp-manga-chapter a").each((_, el) => {
+                    novel.chapters.push({
                         name: $c(el).text().trim(),
                         path: $c(el).attr("href")?.replace(this.site, "") || "",
-                        chapterNumber: i + 1,
+                        chapterNumber: novel.chapters.length + 1,
                     });
                 });
-                novel.chapters = chapters.reverse();
-            } catch (e) { /* silent fallback */ }
+                novel.chapters.reverse();
+            } catch (e) {
+                // Fallback to static parsing
+                $(".wp-manga-chapter a").each((_, el) => {
+                    novel.chapters.push({
+                        name: $(el).text().trim(),
+                        path: $(el).attr("href")?.replace(this.site, "") || "",
+                        chapterNumber: novel.chapters.length + 1,
+                    });
+                });
+                novel.chapters.reverse();
+            }
         }
 
         return novel;
@@ -89,18 +100,23 @@ class NovelNicePlugin implements Plugin.PluginBase {
         const url = `${this.site}${chapterPath}`;
         const body = await fetchText(url, { headers: this.headers });
         const $ = loadCheerio(body);
+        
         $(".nn-comment-toast, .nn-spinner, script, style").remove();
         return $(".text-left, .reading-content, .entry-content_wrap").html() || "";
     }
 
     async searchNovels(searchTerm: string, pageNo: number): Promise<Plugin.NovelItem[]> {
-        // Madara standard search parameter: post_type=wp-manga
         const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}&post_type=wp-manga`;
         const body = await fetchText(url, { headers: this.headers });
+        
+        if (body.includes("captcha") || body.includes("challenge")) {
+            throw new Error("Security challenge detected. Please open this novel in WebView.");
+        }
+
         const $ = loadCheerio(body);
         const novels: Plugin.NovelItem[] = [];
 
-        $(".c-tabs-item__content").each((i, el) => {
+        $(".c-tabs-item__content").each((_, el) => {
             const titleEl = $(el).find(".post-title a").first();
             const name = titleEl.text().trim();
             const path = titleEl.attr("href")?.replace(this.site, "") || "";
