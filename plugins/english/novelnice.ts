@@ -3,6 +3,8 @@ import { load } from "cheerio";
 
 const headers = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
     'Referer': 'https://novelnice.com/',
 };
 
@@ -11,7 +13,7 @@ class NovelNicePlugin implements Plugin {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.0.7";
+    version = "1.1.0";
 
     async popularNovels(pageNo: number) {
         const url = pageNo === 1 ? this.site : `${this.site}page/${pageNo}/`;
@@ -21,10 +23,9 @@ class NovelNicePlugin implements Plugin {
 
         const novels: any[] = [];
         
-        // Loop through the precise structural grid parent wrapper blocks
-        $(".page-item-detail, .manga-item, .item-list").each((i, el) => {
-            // Force it to grab ONLY the specific title element to avoid double tracking links
-            const titleEl = $(el).find(".post-title a, .title a, h3 a, h4 a").first();
+        $(".page-item-detail").each((i, el) => {
+            // Isolates the first link element to discard hidden layout duplication tags
+            const titleEl = $(el).find(".post-title a, .item-summary h3 a, h4 a").first();
             const name = titleEl.text().trim();
             const url = titleEl.attr("href") || "";
             
@@ -47,28 +48,25 @@ class NovelNicePlugin implements Plugin {
 
         const novel: any = {
             url: novelUrl,
-            name: $(".post-title h1, .post-title h3, .title h1").first().text().trim(),
-            cover: $(".summary_image img, .item-thumb img").attr("data-src") || $(".summary_image img, .item-thumb img").attr("src") || "",
-            summary: $(".description-summary, .summary__content, .summary-text, .panel-story-info_description").text().trim(),
-            author: $(".author-content a, .author").text().replace("Author:", "").trim(),
+            name: $(".post-title h1, .post-title h3, h1").first().text().trim(),
+            cover: $(".summary_image img").attr("data-src") || $(".summary_image img").attr("src") || "",
+            summary: $(".description-summary, .summary__content, .summary-text, .post-content_item").text().trim(),
+            author: $(".author-content a").text().trim(),
             artist: "",
-            status: $(".post-status, .status").text().replace("Status:", "").trim(),
+            status: $(".post-status").text().trim(),
             chapters: []
         };
 
-        // Standard direct HTML parser check for Madara/WordPress setups
-        $(".wp-manga-chapter a, li.chapter a, .chapter-list a").each((i, el) => {
+        // Standard Document Tree Traversal
+        $(".wp-manga-chapter a, .chapter-list a, li.chapter a, .listing-chapters_wrap a").each((i, el) => {
             const chapterName = $(el).text().trim();
             const chapterUrl = $(el).attr("href") || "";
-            if (chapterName && chapterUrl) {
-                // Ensure duplicate responsive hidden layers are skipped
-                if (!novel.chapters.some((c: any) => c.url === chapterUrl)) {
-                    novel.chapters.push({ name: chapterName, url: chapterUrl });
-                }
+            if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
+                novel.chapters.push({ name: chapterName, url: chapterUrl });
             }
         });
 
-        // If the main layout left the list blank, hit the fallback background endpoint
+        // Protected AJAX endpoint bridge if elements are wrapped securely
         if (novel.chapters.length === 0) {
             const ajaxUrl = novelUrl.endsWith('/') ? `${novelUrl}ajax/chapters/` : `${novelUrl}/ajax/chapters/`;
             try {
@@ -79,7 +77,7 @@ class NovelNicePlugin implements Plugin {
                 const ajaxBody = await ajaxResult.text();
                 const $c = load(ajaxBody);
 
-                $c(".wp-manga-chapter a, li.chapter a").each((i, el) => {
+                $c(".wp-manga-chapter a, .chapter-link a, li.chapter a").each((i, el) => {
                     const chapterName = $c(el).text().trim();
                     const chapterUrl = $c(el).attr("href") || "";
                     if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
@@ -87,11 +85,11 @@ class NovelNicePlugin implements Plugin {
                     }
                 });
             } catch (e) {
-                // Background fallback safe catch
+                // Safe skip
             }
         }
 
-        // Arrange sequentially if the site lists newest first
+        // Standard sorting fallback verification
         if (novel.chapters.length > 0) {
             const firstChapterName = novel.chapters[0].name.toLowerCase();
             if (!firstChapterName.includes("chapter 1") && !firstChapterName.includes("ch.1")) {
@@ -107,19 +105,20 @@ class NovelNicePlugin implements Plugin {
         const body = await result.text();
         const $ = load(body);
 
-        const chapterText = $(".text-left, .reading-content, .entry-content_wrap, #chapter-content").html() || "";
+        const chapterText = $(".text-left, .reading-content, .entry-content_wrap, .text-ui").html() || "";
         return chapterText;
     }
 
     async searchNovels(searchTerm: string, pageNo: number) {
-        const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}&post_type=wp-manga`;
+        // Rewritten to hit the clean query endpoint and circumvent routing issues
+        const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}`;
         const result = await fetch(url, { headers });
         const body = await result.text();
         const $ = load(body);
 
         const novels: any[] = [];
-        $(".page-item-detail, .manga-item, .c-tabs-item__content").each((i, el) => {
-            const titleEl = $(el).find(".post-title a, .title a").first();
+        $(".page-item-detail, .c-tabs-item__content, .search-wrap").each((i, el) => {
+            const titleEl = $(el).find(".post-title a, h3 a, .title a").first();
             const name = titleEl.text().trim();
             const url = titleEl.attr("href") || "";
             const cover = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || "";
@@ -134,4 +133,3 @@ class NovelNicePlugin implements Plugin {
 }
 
 export default new NovelNicePlugin();
-            
