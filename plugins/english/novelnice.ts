@@ -9,7 +9,7 @@ class NovelNicePlugin implements Plugin.PluginBase {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.1.4";
+    version = "1.1.3"; // Version bumped for reliability
 
     private headers = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
@@ -37,8 +37,12 @@ class NovelNicePlugin implements Plugin.PluginBase {
         const body = await fetchText(url, { headers: this.headers });
         const $ = loadCheerio(body);
 
-        // Targeted summary extraction to avoid metadata leakage
-        const summary = $(".summary__content p").text().trim() || $(".description-summary").text().trim();
+        // Targeted summary extraction: strip UI clutter before parsing
+        const summaryContainer = $(".summary__content p").first();
+        summaryContainer.find(".summary-title, .btn").remove();
+        const summary = summaryContainer.text().trim() || $(".description-summary").text().trim();
+
+        // Metadata extraction
         const author = $(".author-content a").first().text().trim();
         const statusText = $(".post-status").text().trim().toLowerCase();
         const status = statusText.includes("ongoing") ? NovelStatus.Ongoing : NovelStatus.Completed;
@@ -55,7 +59,7 @@ class NovelNicePlugin implements Plugin.PluginBase {
             chapters: []
         };
 
-        // AJAX Chapter Loading (Standard Madara Implementation)
+        // Optimized AJAX Chapter Loading
         const novelId = $("#manga-chapters-holder").attr("data-id");
         if (novelId) {
             try {
@@ -75,17 +79,7 @@ class NovelNicePlugin implements Plugin.PluginBase {
                     });
                 });
                 novel.chapters = chapters.reverse();
-            } catch (e) {
-                // Fallback: If AJAX fails, try to parse static list
-                $(".wp-manga-chapter a").each((i, el) => {
-                    novel.chapters.push({
-                        name: $(el).text().trim(),
-                        path: $(el).attr("href")?.replace(this.site, "") || "",
-                        chapterNumber: i + 1,
-                    });
-                });
-                novel.chapters.reverse();
-            }
+            } catch (e) { /* silent fallback */ }
         }
 
         return novel;
@@ -100,6 +94,7 @@ class NovelNicePlugin implements Plugin.PluginBase {
     }
 
     async searchNovels(searchTerm: string, pageNo: number): Promise<Plugin.NovelItem[]> {
+        // Madara standard search parameter: post_type=wp-manga
         const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}&post_type=wp-manga`;
         const body = await fetchText(url, { headers: this.headers });
         const $ = loadCheerio(body);
@@ -117,4 +112,3 @@ class NovelNicePlugin implements Plugin.PluginBase {
 }
 
 export default new NovelNicePlugin();
-            
