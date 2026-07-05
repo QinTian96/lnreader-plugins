@@ -11,10 +11,9 @@ class NovelNicePlugin implements Plugin {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.0.6";
+    version = "1.0.7";
 
     async popularNovels(pageNo: number) {
-        // Targets their main updates index matching the homepage grid
         const url = pageNo === 1 ? this.site : `${this.site}page/${pageNo}/`;
         const result = await fetch(url, { headers });
         const body = await result.text();
@@ -22,14 +21,16 @@ class NovelNicePlugin implements Plugin {
 
         const novels: any[] = [];
         
-        // Target layout containers visible in the screenshot
-        $(".item-list, .col-md-6, .grid-item, .page-item-detail").each((i, el) => {
-            const titleEl = $(el).find(".title a, .post-title a, h3 a, h4 a").first();
+        // Loop through the precise structural grid parent wrapper blocks
+        $(".page-item-detail, .manga-item, .item-list").each((i, el) => {
+            // Force it to grab ONLY the specific title element to avoid double tracking links
+            const titleEl = $(el).find(".post-title a, .title a, h3 a, h4 a").first();
             const name = titleEl.text().trim();
             const url = titleEl.attr("href") || "";
             
-            let cover = $(el).find(".image img, .cover img, img").attr("src") || 
-                        $(el).find("img").attr("data-src") || "";
+            let cover = $(el).find("img").attr("data-src") || 
+                        $(el).find("img").attr("data-lazy-src") || 
+                        $(el).find("img").attr("src") || "";
 
             if (name && url) {
                 novels.push({ name, url, cover });
@@ -46,29 +47,56 @@ class NovelNicePlugin implements Plugin {
 
         const novel: any = {
             url: novelUrl,
-            name: $(".title h1, .post-title h1").text().trim(),
-            cover: $(".image img, .cover img, .summary_image img").attr("src") || "",
-            summary: $(".synopsis, .description-summary, .summary__content").text().trim(),
-            author: $(".author, .author-content").text().replace("Author:", "").trim(),
+            name: $(".post-title h1, .post-title h3, .title h1").first().text().trim(),
+            cover: $(".summary_image img, .item-thumb img").attr("data-src") || $(".summary_image img, .item-thumb img").attr("src") || "",
+            summary: $(".description-summary, .summary__content, .summary-text, .panel-story-info_description").text().trim(),
+            author: $(".author-content a, .author").text().replace("Author:", "").trim(),
             artist: "",
-            status: $(".status").text().replace("Status:", "").trim(),
+            status: $(".post-status, .status").text().replace("Status:", "").trim(),
             chapters: []
         };
 
-        // Grabs chapters from both structural formats
-        $(".chapter-list a, .wp-manga-chapter a, li.chapter a").each((i, el) => {
+        // Standard direct HTML parser check for Madara/WordPress setups
+        $(".wp-manga-chapter a, li.chapter a, .chapter-list a").each((i, el) => {
             const chapterName = $(el).text().trim();
             const chapterUrl = $(el).attr("href") || "";
             if (chapterName && chapterUrl) {
-                novel.chapters.push({ name: chapterName, url: chapterUrl });
+                // Ensure duplicate responsive hidden layers are skipped
+                if (!novel.chapters.some((c: any) => c.url === chapterUrl)) {
+                    novel.chapters.push({ name: chapterName, url: chapterUrl });
+                }
             }
         });
 
-        // Only reverse if the source site shows them newest-to-oldest
-        if ($(".chapter-list a, li.chapter a").first().text().toLowerCase().includes("chapter 1")) {
-            // Already ordered sequentially
-        } else {
-            novel.chapters.reverse();
+        // If the main layout left the list blank, hit the fallback background endpoint
+        if (novel.chapters.length === 0) {
+            const ajaxUrl = novelUrl.endsWith('/') ? `${novelUrl}ajax/chapters/` : `${novelUrl}/ajax/chapters/`;
+            try {
+                const ajaxResult = await fetch(ajaxUrl, {
+                    method: 'POST',
+                    headers: { ...headers, 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                const ajaxBody = await ajaxResult.text();
+                const $c = load(ajaxBody);
+
+                $c(".wp-manga-chapter a, li.chapter a").each((i, el) => {
+                    const chapterName = $c(el).text().trim();
+                    const chapterUrl = $c(el).attr("href") || "";
+                    if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
+                        novel.chapters.push({ name: chapterName, url: chapterUrl });
+                    }
+                });
+            } catch (e) {
+                // Background fallback safe catch
+            }
+        }
+
+        // Arrange sequentially if the site lists newest first
+        if (novel.chapters.length > 0) {
+            const firstChapterName = novel.chapters[0].name.toLowerCase();
+            if (!firstChapterName.includes("chapter 1") && !firstChapterName.includes("ch.1")) {
+                novel.chapters.reverse();
+            }
         }
         
         return novel;
@@ -79,23 +107,22 @@ class NovelNicePlugin implements Plugin {
         const body = await result.text();
         const $ = load(body);
 
-        // Sweeps every text content container variation
-        const chapterText = $(".chapter-content, .text-left, .reading-content, #chapter-content").html() || "";
+        const chapterText = $(".text-left, .reading-content, .entry-content_wrap, #chapter-content").html() || "";
         return chapterText;
     }
 
     async searchNovels(searchTerm: string, pageNo: number) {
-        const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}`;
+        const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}&post_type=wp-manga`;
         const result = await fetch(url, { headers });
         const body = await result.text();
         const $ = load(body);
 
         const novels: any[] = [];
-        $(".item-list, .col-md-6, .grid-item").each((i, el) => {
-            const titleEl = $(el).find(".title a, .post-title a").first();
+        $(".page-item-detail, .manga-item, .c-tabs-item__content").each((i, el) => {
+            const titleEl = $(el).find(".post-title a, .title a").first();
             const name = titleEl.text().trim();
             const url = titleEl.attr("href") || "";
-            const cover = $(el).find("img").attr("src") || "";
+            const cover = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || "";
             
             if (name && url) {
                 novels.push({ name, url, cover });
@@ -107,3 +134,4 @@ class NovelNicePlugin implements Plugin {
 }
 
 export default new NovelNicePlugin();
+            
