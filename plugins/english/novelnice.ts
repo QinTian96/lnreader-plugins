@@ -13,7 +13,7 @@ class NovelNicePlugin implements Plugin {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.1.0";
+    version = "1.1.2";
 
     async popularNovels(pageNo: number) {
         const url = pageNo === 1 ? this.site : `${this.site}page/${pageNo}/`;
@@ -24,14 +24,13 @@ class NovelNicePlugin implements Plugin {
         const novels: any[] = [];
         
         $(".page-item-detail").each((i, el) => {
-            // Isolates the first link element to discard hidden layout duplication tags
             const titleEl = $(el).find(".post-title a, .item-summary h3 a, h4 a").first();
             const name = titleEl.text().trim();
             const url = titleEl.attr("href") || "";
             
-            let cover = $(el).find("img").attr("data-src") || 
-                        $(el).find("img").attr("data-lazy-src") || 
-                        $(el).find("img").attr("src") || "";
+            const cover = $(el).find("img").attr("data-src") || 
+                          $(el).find("img").attr("data-lazy-src") || 
+                          $(el).find("img").attr("src") || "";
 
             if (name && url) {
                 novels.push({ name, url, cover });
@@ -46,6 +45,9 @@ class NovelNicePlugin implements Plugin {
         const body = await result.text();
         const $ = load(body);
 
+        // Strip custom styling and layout configurations explicitly out of memory
+        $("style, script, #nn-comment-optimize-inline-css").remove();
+
         const novel: any = {
             url: novelUrl,
             name: $(".post-title h1, .post-title h3, h1").first().text().trim(),
@@ -57,8 +59,8 @@ class NovelNicePlugin implements Plugin {
             chapters: []
         };
 
-        // Standard Document Tree Traversal
-        $(".wp-manga-chapter a, .chapter-list a, li.chapter a, .listing-chapters_wrap a").each((i, el) => {
+        // Standard parsing extraction targeted on the unified layout container
+        $(".listing-chapters_wrap ul.main li a, .wp-manga-chapter a, .chapter-list a").each((i, el) => {
             const chapterName = $(el).text().trim();
             const chapterUrl = $(el).attr("href") || "";
             if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
@@ -66,7 +68,7 @@ class NovelNicePlugin implements Plugin {
             }
         });
 
-        // Protected AJAX endpoint bridge if elements are wrapped securely
+        // Safe background fallback if pagination blocks hide standard page listings
         if (novel.chapters.length === 0) {
             const ajaxUrl = novelUrl.endsWith('/') ? `${novelUrl}ajax/chapters/` : `${novelUrl}/ajax/chapters/`;
             try {
@@ -77,7 +79,7 @@ class NovelNicePlugin implements Plugin {
                 const ajaxBody = await ajaxResult.text();
                 const $c = load(ajaxBody);
 
-                $c(".wp-manga-chapter a, .chapter-link a, li.chapter a").each((i, el) => {
+                $c(".listing-chapters_wrap ul.main li a, .wp-manga-chapter a, .chapter-link a").each((i, el) => {
                     const chapterName = $c(el).text().trim();
                     const chapterUrl = $c(el).attr("href") || "";
                     if (chapterName && chapterUrl && !novel.chapters.some((c: any) => c.url === chapterUrl)) {
@@ -85,11 +87,10 @@ class NovelNicePlugin implements Plugin {
                     }
                 });
             } catch (e) {
-                // Safe skip
+                // Fail-safe catch
             }
         }
 
-        // Standard sorting fallback verification
         if (novel.chapters.length > 0) {
             const firstChapterName = novel.chapters[0].name.toLowerCase();
             if (!firstChapterName.includes("chapter 1") && !firstChapterName.includes("ch.1")) {
@@ -105,12 +106,14 @@ class NovelNicePlugin implements Plugin {
         const body = await result.text();
         const $ = load(body);
 
+        // Stripping dynamic toast elements and injected styling layers out of text layout blocks
+        $("style, script, .nn-comment-toast, .nn-spinner").remove();
+
         const chapterText = $(".text-left, .reading-content, .entry-content_wrap, .text-ui").html() || "";
         return chapterText;
     }
 
     async searchNovels(searchTerm: string, pageNo: number) {
-        // Rewritten to hit the clean query endpoint and circumvent routing issues
         const url = `${this.site}page/${pageNo}/?s=${encodeURIComponent(searchTerm)}`;
         const result = await fetch(url, { headers });
         const body = await result.text();
