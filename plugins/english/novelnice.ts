@@ -9,7 +9,7 @@ class NovelNicePlugin implements Plugin.PluginBase {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.1.3"; // Version bumped for reliability
+    version = "1.1.5"; // Version bumped for reliability
 
     private headers = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
