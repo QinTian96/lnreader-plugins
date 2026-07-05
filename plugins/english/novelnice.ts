@@ -11,20 +11,27 @@ class NovelNicePlugin implements Plugin {
     name = "NovelNice";
     icon = "src/en/novelnice/icon.png";
     site = "https://novelnice.com/";
-    version = "1.0.3";
+    version = "1.0.4";
 
     async popularNovels(pageNo: number) {
-        // Updated to use the correct Madara query path to prevent the 404 error
-        const url = `${this.site}?s=&post_type=wp-manga&m_orderby=views&page=${pageNo}`;
+        // Broad search parameters to pull the full list reliably
+        const url = `${this.site}page/${pageNo}/?s=&post_type=wp-manga&m_orderby=views`;
         const result = await fetch(url, { headers });
         const body = await result.text();
         const $ = load(body);
 
         const novels: any[] = [];
-        $(".c-tabs-item__content, .page-item-detail").each((i, el) => {
-            const name = $(el).find(".post-title a").text().trim();
-            const url = $(el).find(".post-title a").attr("href") || "";
-            const cover = $(el).find("img").attr("src") || "";
+        
+        // Aggressive fallback selectors targeting different Madara variations
+        $(".c-tabs-item__content, .page-item-detail, .row.c-tabs-item__content, .manga-item").each((i, el) => {
+            const titleEl = $(el).find(".post-title a, .h4 a, h3 a, h4 a").first();
+            const name = titleEl.text().trim();
+            const url = titleEl.attr("href") || "";
+            
+            let cover = $(el).find("img").attr("data-src") || 
+                        $(el).find("img").attr("data-lazy-src") || 
+                        $(el).find("img").attr("src") || "";
+
             if (name && url) {
                 novels.push({ name, url, cover });
             }
@@ -40,9 +47,9 @@ class NovelNicePlugin implements Plugin {
 
         const novel: any = {
             url: novelUrl,
-            name: $(".post-title h1").text().trim(),
-            cover: $(".summary_image img").attr("src") || "",
-            summary: $(".description-summary").text().trim(),
+            name: $(".post-title h1, .post-title h3").text().trim(),
+            cover: $(".summary_image img").attr("data-src") || $(".summary_image img").attr("src") || "",
+            summary: $(".description-summary, .summary__content").text().trim(),
             author: $(".author-content a").text().trim(),
             artist: $(".artist-content a").text().trim(),
             status: $(".post-status").text().trim(),
@@ -63,7 +70,9 @@ class NovelNicePlugin implements Plugin {
         $c(".wp-manga-chapter").each((i, el) => {
             const chapterName = $c(el).find("a").text().trim();
             const chapterUrl = $c(el).find("a").attr("href") || "";
-            novel.chapters.push({ name: chapterName, url: chapterUrl });
+            if (chapterName && chapterUrl) {
+                novel.chapters.push({ name: chapterName, url: chapterUrl });
+            }
         });
 
         novel.chapters.reverse();
@@ -75,7 +84,7 @@ class NovelNicePlugin implements Plugin {
         const body = await result.text();
         const $ = load(body);
 
-        const chapterText = $(".text-left").html() || "";
+        const chapterText = $(".text-left, .reading-content, .entry-content_wrap").html() || "";
         return chapterText;
     }
 
@@ -86,11 +95,15 @@ class NovelNicePlugin implements Plugin {
         const $ = load(body);
 
         const novels: any[] = [];
-        $(".c-tabs-item__content").each((i, el) => {
-            const name = $(el).find(".post-title a").text().trim();
-            const url = $(el).find(".post-title a").attr("href") || "";
-            const cover = $(el).find("img").attr("src") || "";
-            novels.push({ name, url, cover });
+        $(".c-tabs-item__content, .page-item-detail, .manga-item").each((i, el) => {
+            const titleEl = $(el).find(".post-title a, .h4 a").first();
+            const name = titleEl.text().trim();
+            const url = titleEl.attr("href") || "";
+            const cover = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || "";
+            
+            if (name && url) {
+                novels.push({ name, url, cover });
+            }
         });
 
         return novels;
@@ -98,3 +111,4 @@ class NovelNicePlugin implements Plugin {
 }
 
 export default new NovelNicePlugin();
+                
