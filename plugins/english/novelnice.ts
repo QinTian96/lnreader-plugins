@@ -10,7 +10,7 @@ class NovelnicePlugin implements Plugin.PluginBase {
   name = 'Novelnice';
   icon = 'src/en/novelnice/icon.png';
   site = 'https://novelnice.com/';
-  version = '1.0.5';
+  version = '2.4.5';
   filters: Filters | undefined = undefined;
   imageRequestInit?: Plugin.ImageRequestInit | undefined = undefined;
   webStorageUtilized?: boolean = true;
