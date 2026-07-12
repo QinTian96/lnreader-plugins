@@ -9,7 +9,7 @@ const NovelnicePlugin: Plugin = {
     name: "Novelnice",
     icon: "assets/icon.png", // Ensure this matches your asset file path
     site: baseUrl,
-    version: "1.0.0",
+    version: "2.0.0",
 
     // 1. POPULAR / LATEST BROWSE FUNCTION
     async popularNovels(page, { filters }) {
