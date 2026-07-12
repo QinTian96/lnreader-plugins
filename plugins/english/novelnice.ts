@@ -8,12 +8,11 @@ import { storage } from '@libs/storage';
 class Novelnice implements Plugin.PluginBase {
   id = 'novelnice';
   name = 'Novelnice';
-  version = '2.1.0';
-  icon = 'src/en/novelnice/icon.png'; // Update path if your local directory layout differs
+  version = '1.0.1';
+  icon = 'src/en/novelnice/icon.png';
   site = 'https://novelnice.com/';
   webStorageUtilized = true;
 
-  // Handles standard fetching, error management, and Cloudflare page check detection
   async getCheerio(url: string): Promise<CheerioAPI> {
     const r = await fetchApi(url);
     if (!r.ok) {
@@ -45,7 +44,6 @@ class Novelnice implements Plugin.PluginBase {
       const novelHref = $el.find('.post-title h3 a').attr('href');
 
       if (!novelHref) return;
-      // Convert absolute URL string into a relative path string matching framework specifications
       const path = new URL(novelHref, this.site).pathname.substring(1);
 
       const imgElement = $el.find('.item-thumb img');
@@ -85,7 +83,28 @@ class Novelnice implements Plugin.PluginBase {
     summaryElement.find('.c-content-readmore, script').remove();
     novel.summary = summaryElement.text().trim() || 'Summary Not Found';
 
-    // Solve AJAX Chapter Hook Block
+    // Loop through custom .post-content_item structures for Tags/Genres and Total Chapters
+    $('.post-content_item').each((_, el) => {
+      const heading = $(el).find('.summary-heading h5').text().trim().toLowerCase();
+      
+      // Dynamic Tag/Genre Extraction
+      if (heading.includes('genre') || heading.includes('tag')) {
+        novel.genres = $(el)
+          .find('.summary-content a')
+          .map((_, tagEl) => $(tagEl).text().trim())
+          .toArray()
+          .join(',');
+      }
+
+      // Total Chapters Metadata Extraction
+      if (heading.includes('chapters')) {
+        const totalChaptersText = $(el).find('.summary-content').text().trim();
+        // Fallback or debug assignment if framework utilizes exact chapter lengths tracking
+        console.log(`Site total chapters listed: ${totalChaptersText}`);
+      }
+    });
+
+    // Solve AJAX Chapter Hook Block using structural backend ID parameter
     const mangaId = $('#manga-chapters-holder').attr('data-id');
     if (mangaId) {
       const ajaxUrl = `${this.site}wp-admin/admin-ajax.php`;
@@ -94,7 +113,6 @@ class Novelnice implements Plugin.PluginBase {
         id: mangaId,
       });
 
-      // Execute POST request to get the complete raw chapter HTML payload
       const ajaxResponse = await fetchApi(`${ajaxUrl}?${params.toString()}`, {
         method: 'POST',
       });
@@ -116,7 +134,7 @@ class Novelnice implements Plugin.PluginBase {
           }
         });
 
-        // Ensure chronological structure tracking: oldest chapters first
+        // Ensure chronological sequence tracking (oldest chapters first)
         novel.chapters!.reverse();
       }
     }
@@ -129,10 +147,8 @@ class Novelnice implements Plugin.PluginBase {
     const $ = await this.getCheerio(this.site + chapterPath);
     const chapterText = $('.text-left');
 
-    // Clean up structural junk elements
     chapterText.find('#text-chapter-toolbar, script, style, iframe, .ads-content').remove();
 
-    // Strip out matching watermark paragraphs cleanly
     chapterText.find('p').each((_, el) => {
       const $p = $(el);
       const text = $p.text();
@@ -179,4 +195,4 @@ class Novelnice implements Plugin.PluginBase {
 }
 
 export default new Novelnice();
-            
+          
