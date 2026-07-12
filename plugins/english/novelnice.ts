@@ -7,7 +7,7 @@ import { defaultCover } from '@/types/constants';
 class Novelnice implements Plugin.PluginBase {
   id = 'novelnice';
   name = 'Novelnice';
-  version = '2.3.2';
+  version = '2.2.3';
   icon = 'src/en/novelnice/icon.png';
   site = 'https://novelnice.com/';
   webStorageUtilized = true;
@@ -59,7 +59,7 @@ class Novelnice implements Plugin.PluginBase {
     return novels;
   }
 
-  // 2. NOVEL DETAILS & MULTI-PAGE AJAX CHAPTER EXTRACTOR
+  // 2. NOVEL DETAILS & EXTENSIVELY CORRECTED MULTI-PAGE AJAX CHAPTER EXTRACTOR
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
     const $ = await this.getCheerio(this.site + novelPath);
     
@@ -82,7 +82,7 @@ class Novelnice implements Plugin.PluginBase {
     summaryElement.find('.c-content-readmore, script').remove();
     novel.summary = summaryElement.text().trim() || 'Summary Not Found';
 
-    // Loop through metadata blocks for genres and total chapter listings
+    // Extract Genres dynamically out of the unique .post-content_item list sequence
     $('.post-content_item').each((_, el) => {
       const heading = $(el).find('.summary-heading h5').text().trim().toLowerCase();
       
@@ -95,15 +95,21 @@ class Novelnice implements Plugin.PluginBase {
       }
     });
 
-    // Reverse-Engineered Chapter Endpoint Loop Check
+    // RE-ENGINEERED AJAX PAGINATION LOOP
     let chapterPage = 1;
     let hasMoreChapters = true;
+    const seenPaths = new Set<string>(); 
 
     while (hasMoreChapters) {
       const ajaxUrl = `${this.site}${novelPath}/ajax/chapters/?t=${chapterPage}`;
 
       const ajaxResponse = await fetchApi(ajaxUrl, {
         method: 'POST',
+        headers: {
+          'Accept': '*/*',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': this.site + novelPath
+        }
       });
 
       if (!ajaxResponse.ok) {
@@ -112,30 +118,47 @@ class Novelnice implements Plugin.PluginBase {
 
       const ajaxHtml = await ajaxResponse.text();
       const $ajax = load(ajaxHtml);
-      const foundAnchors = $ajax('.wp-manga-chapter a, .chapter-item a, li a');
+      
+      // Target ALL returned hyperlinks inside the isolated pagination response text
+      const foundAnchors = $ajax('a');
 
       if (foundAnchors.length === 0) {
         hasMoreChapters = false;
         break;
       }
 
+      let parsedOnThisPage = 0;
+
       foundAnchors.each((_, el) => {
         const chapterName = $ajax(el).text().trim();
         const chapterHref = $ajax(el).attr('href');
 
-        if (chapterName && chapterHref) {
+        // Capture story links while safely ignoring pagination markers (e.g. ">>", "2")
+        if (chapterName && chapterHref && !chapterHref.includes('?t=')) {
           const chapterPath = new URL(chapterHref, this.site).pathname.substring(1);
-          novel.chapters!.push({
-            name: chapterName,
-            path: chapterPath,
-          });
+          
+          if (!seenPaths.has(chapterPath)) {
+            seenPaths.add(chapterPath);
+            parsedOnThisPage++;
+            
+            novel.chapters!.push({
+              name: chapterName,
+              path: chapterPath,
+            });
+          }
         }
       });
+
+      // Break loop if zero new chapters are successfully handled to avoid an infinite execution lock
+      if (parsedOnThisPage === 0) {
+        hasMoreChapters = false;
+        break;
+      }
 
       chapterPage++;
     }
 
-    // Keep chronological layout intact
+    // Sort chapters in oldest-to-newest configuration sequence
     novel.chapters!.reverse();
 
     return novel as Plugin.SourceNovel;
