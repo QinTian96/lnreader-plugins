@@ -3,12 +3,11 @@ import { fetchApi } from '@libs/fetch';
 import { Plugin } from '@/types/plugin';
 import { NovelStatus } from '@libs/novelStatus';
 import { defaultCover } from '@/types/constants';
-import { storage } from '@libs/storage';
 
 class Novelnice implements Plugin.PluginBase {
   id = 'novelnice';
   name = 'Novelnice';
-  version = '1.0.1';
+  version = '2.3.2';
   icon = 'src/en/novelnice/icon.png';
   site = 'https://novelnice.com/';
   webStorageUtilized = true;
@@ -60,7 +59,7 @@ class Novelnice implements Plugin.PluginBase {
     return novels;
   }
 
-  // 2. NOVEL DETAILS & DYNAMIC AJAX CHAPTER EXTRACTION
+  // 2. NOVEL DETAILS & MULTI-PAGE AJAX CHAPTER EXTRACTOR
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
     const $ = await this.getCheerio(this.site + novelPath);
     
@@ -83,11 +82,10 @@ class Novelnice implements Plugin.PluginBase {
     summaryElement.find('.c-content-readmore, script').remove();
     novel.summary = summaryElement.text().trim() || 'Summary Not Found';
 
-    // Loop through custom .post-content_item structures for Tags/Genres and Total Chapters
+    // Loop through metadata blocks for genres and total chapter listings
     $('.post-content_item').each((_, el) => {
       const heading = $(el).find('.summary-heading h5').text().trim().toLowerCase();
       
-      // Dynamic Tag/Genre Extraction
       if (heading.includes('genre') || heading.includes('tag')) {
         novel.genres = $(el)
           .find('.summary-content a')
@@ -95,49 +93,50 @@ class Novelnice implements Plugin.PluginBase {
           .toArray()
           .join(',');
       }
-
-      // Total Chapters Metadata Extraction
-      if (heading.includes('chapters')) {
-        const totalChaptersText = $(el).find('.summary-content').text().trim();
-        // Fallback or debug assignment if framework utilizes exact chapter lengths tracking
-        console.log(`Site total chapters listed: ${totalChaptersText}`);
-      }
     });
 
-    // Solve AJAX Chapter Hook Block using structural backend ID parameter
-    const mangaId = $('#manga-chapters-holder').attr('data-id');
-    if (mangaId) {
-      const ajaxUrl = `${this.site}wp-admin/admin-ajax.php`;
-      const params = new URLSearchParams({
-        action: 'ajax_manga_list',
-        id: mangaId,
-      });
+    // Reverse-Engineered Chapter Endpoint Loop Check
+    let chapterPage = 1;
+    let hasMoreChapters = true;
 
-      const ajaxResponse = await fetchApi(`${ajaxUrl}?${params.toString()}`, {
+    while (hasMoreChapters) {
+      const ajaxUrl = `${this.site}${novelPath}/ajax/chapters/?t=${chapterPage}`;
+
+      const ajaxResponse = await fetchApi(ajaxUrl, {
         method: 'POST',
       });
 
-      if (ajaxResponse.ok) {
-        const ajaxHtml = await ajaxResponse.text();
-        const $ajax = load(ajaxHtml);
-
-        $ajax('.wp-manga-chapter a, .chapter-item a').each((_, el) => {
-          const chapterName = $ajax(el).text().trim();
-          const chapterHref = $ajax(el).attr('href');
-
-          if (chapterName && chapterHref) {
-            const chapterPath = new URL(chapterHref, this.site).pathname.substring(1);
-            novel.chapters!.push({
-              name: chapterName,
-              path: chapterPath,
-            });
-          }
-        });
-
-        // Ensure chronological sequence tracking (oldest chapters first)
-        novel.chapters!.reverse();
+      if (!ajaxResponse.ok) {
+        break; 
       }
+
+      const ajaxHtml = await ajaxResponse.text();
+      const $ajax = load(ajaxHtml);
+      const foundAnchors = $ajax('.wp-manga-chapter a, .chapter-item a, li a');
+
+      if (foundAnchors.length === 0) {
+        hasMoreChapters = false;
+        break;
+      }
+
+      foundAnchors.each((_, el) => {
+        const chapterName = $ajax(el).text().trim();
+        const chapterHref = $ajax(el).attr('href');
+
+        if (chapterName && chapterHref) {
+          const chapterPath = new URL(chapterHref, this.site).pathname.substring(1);
+          novel.chapters!.push({
+            name: chapterName,
+            path: chapterPath,
+          });
+        }
+      });
+
+      chapterPage++;
     }
+
+    // Keep chronological layout intact
+    novel.chapters!.reverse();
 
     return novel as Plugin.SourceNovel;
   }
@@ -195,4 +194,3 @@ class Novelnice implements Plugin.PluginBase {
 }
 
 export default new Novelnice();
-          
